@@ -6,6 +6,7 @@
 		"dev": "svelte-kit dev",
 		"build": "svelte-kit build",
 		"adapt": "svelte-kit adapt",
+		"fetch": "git pull upstream master",
 		"start": "svelte-kit start --port 3010"
 	},
 	"devDependencies": {
