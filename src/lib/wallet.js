@@ -1,7 +1,7 @@
 import bs58 from "bs58";
 import { tick } from "svelte";
 import { get } from "svelte/store";
-import { api, electrs } from "$lib/api";
+import { api, electrs, hasura } from "$lib/api";
 import { retry } from "wretch-middlewares";
 import { mnemonicToSeedSync } from "bip39";
 import { fromSeed } from "bip32";
@@ -34,11 +34,12 @@ import {
 import cryptojs from "crypto-js";
 import { btc, assetLabel } from "$lib/utils";
 import { requirePassword } from "$lib/auth";
+import { getActiveBids } from "$queries/transactions";
 
 const DUST = 1000;
 
 const SERVER_PUBKEY = Buffer.from(
-  "02e4520146cb2536acc5431d2e786f89470aa8ed3e2c61afecfc8d1e858e01eaa8",
+  "03c3722bb4260f8c449fc8f266a58348d99410a26096fba84fb15c1d66d868f87b",
   "hex"
 );
 const network = networks.regtest;
@@ -83,10 +84,11 @@ export const getBalances = () => {
 
   let getUtxos = async (singlesig, multisig) => {
     await requirePassword();
+    let locked = await getLocked();
     let f = (a) => electrs.url(`/address/${a}/utxo`).get().json();
     let single = (await f(singlesig)).map((u) => ({ ...u, single: true }));
     let multi = (await f(multisig)).map((u) => ({ ...u, multi: true }));
-    let utxos = [...single, ...multi];
+    let utxos = [...single, ...multi].filter((u) => !locked.includes(u.txid));
 
     assets.set(
       [...utxos, { asset: btc }]
@@ -221,6 +223,33 @@ function shuffle(array) {
   return array;
 }
 
+const getLocked = async (asset = btc) => {
+  let locked = [];
+  if (asset === btc) {
+    try {
+      let res = await hasura
+        .auth(`Bearer ${get(token)}`)
+        .post({
+          query: getActiveBids(get(user).id),
+        })
+        .json();
+
+      res.data.activebids.map((t) => {
+        let p = Psbt.fromBase64(t.psbt);
+        locked.push(
+          ...p.data.globalMap.unsignedTx.tx.ins.map((i) =>
+            reverse(i.hash).toString("hex")
+          )
+        );
+      });
+    } catch (e) {
+      console.log(e);
+    }
+  }
+
+  return locked;
+};
+
 const fund = async (
   p,
   out,
@@ -232,10 +261,14 @@ const fund = async (
   let { address, redeem, output } = out;
 
   let utxos = await electrs.url(`/address/${address}/utxo`).get().json();
+  let locked = await getLocked(asset);
 
   utxos = shuffle(
     utxos.filter(
-      (o) => o.asset === asset && (o.asset !== btc || o.value > DUST)
+      (o) =>
+        o.asset === asset &&
+        (o.asset !== btc || o.value > DUST) &&
+        !locked.includes(o.txid)
     )
   );
 

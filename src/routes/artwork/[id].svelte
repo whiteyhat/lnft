@@ -10,8 +10,8 @@
   import { compareAsc, format, parseISO } from "date-fns";
   import { Activity, Avatar, Card, ProgressLinear } from "$comp";
   import Sidebar from "./_sidebar";
-  import { tick } from "svelte";
-  import { prompt, password, user, token, psbt } from "$lib/store";
+  import { tick, onDestroy } from "svelte";
+  import { art, prompt, password, user, token, psbt } from "$lib/store";
   import countdown from "$lib/countdown";
   import {
     getArtworkSub,
@@ -34,7 +34,6 @@
   } from "$lib/wallet";
   import { Psbt } from "@asoltys/liquidjs-lib";
   import { api } from "$lib/api";
-  import Head from "$components/Head";
   import ArtworkQuery from "$components/ArtworkQuery";
   import SocialShare from "$components/SocialShare";
 
@@ -76,19 +75,14 @@
       operationStore(getArtworkSub(id)),
       (a, b) => (artwork = b.artworks_by_pk)
     );
-
-    query(operationStore(getArtwork(id)), {}, { requestPolicy }).subscribe(
-      (r) => {
-        if (r.data) {
-          artwork = r.data.artworks_by_pk;
-        }
-      }
-    );
   };
+
+  onDestroy(() => ($art = undefined));
 
   $: update(artwork);
   let update = () => {
     if (!artwork) return;
+    $art = artwork;
 
     let count = () => {
       clearTimeout(timeout);
@@ -117,12 +111,15 @@
 
   let makeOffer = async (e) => {
     if (e) e.preventDefault();
+    offering = true;
+
     await requirePassword();
 
     try {
       $psbt = await createOffer(artwork, transaction.amount, 500);
     } catch (e) {
       err(e);
+      offering = false;
       return;
     }
 
@@ -130,6 +127,7 @@
     transaction.psbt = $psbt.toBase64();
     transaction.hash = $psbt.__CACHE.__TX.getId();
     await save();
+    offering = false;
   };
 
   let save = async (e) => {
@@ -147,7 +145,7 @@
     bidding = false;
   };
 
-  let bidding, amountInput;
+  let bidding, amountInput, offering;
   let startBidding = async () => {
     bidding = true;
     await tick();
@@ -296,7 +294,8 @@
     object-fit: contain !important;
   }
 
-  .desktopImage :global(img), .desktopImage :global(video){
+  .desktopImage :global(img),
+  .desktopImage :global(video) {
     margin: 0 auto;
   }
 
@@ -360,7 +359,6 @@
 
 <div class="container mx-auto mt-10 md:mt-20">
   {#if artwork}
-    <Head {artwork} />
     <div class="flex flex-wrap">
       <div class="lg:text-left w-full lg:w-1/3 lg:max-w-xs">
         <h1 class="text-3xl font-black primary-color">
@@ -463,25 +461,29 @@
               class:disabled>Buy now</button>
           {/if}
           {#if bidding}
-            <form on:submit={makeOffer}>
-              <div class="flex flex-col mb-4">
-                <div>
-                  <div class="mt-1 relative rounded-md shadow-sm">
-                    <input
-                      id="price"
-                      class="form-input block w-full pl-7"
-                      placeholder={val(0)}
-                      bind:value={amount}
-                      bind:this={amountInput} />
-                    <div
-                      class="absolute inset-y-0 right-0 flex items-center mr-2">
-                      {ticker}
+            {#if offering}
+              <ProgressLinear />
+            {:else}
+              <form on:submit={makeOffer}>
+                <div class="flex flex-col mb-4">
+                  <div>
+                    <div class="mt-1 relative rounded-md shadow-sm">
+                      <input
+                        id="price"
+                        class="form-input block w-full pl-7"
+                        placeholder={val(0)}
+                        bind:value={amount}
+                        bind:this={amountInput} />
+                      <div
+                        class="absolute inset-y-0 right-0 flex items-center mr-2">
+                        {ticker}
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
-              <button type="submit" class="secondary-btn">Submit</button>
-            </form>
+                <button type="submit" class="secondary-btn">Submit</button>
+              </form>
+            {/if}
           {:else if !artwork.auction_start || compareAsc(now, parseISO(artwork.auction_start)) === 1}
             <button
               on:click={startBidding}
@@ -556,10 +558,11 @@
         </div>
 
         {#if artwork.description}
-          <div
-            class="desk-desc description text-gray-600 break-words">
+          <div class="desk-desc description text-gray-600 break-words">
             <h4 class="mt-10 mb-5 font-bold">About this artwork</h4>
-            <div class="whitespace-pre-wrap">{@html linkify(artwork.description)}</div>
+            <div class="whitespace-pre-wrap">
+              {@html linkify(artwork.description)}
+            </div>
           </div>
         {/if}
 
